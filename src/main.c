@@ -89,5 +89,5 @@ int main(int argc, char **argv) {
 
   kq_waitpid(pid);
 
-  return 0;
+  return EXIT_SUCCESS;
 }

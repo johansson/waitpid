@@ -22,11 +22,20 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/event.h>
 #include <unistd.h>
+
+void print_error_and_exit(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  vfprintf(stderr, format, args);
+  va_end(args);
+  exit(EXIT_FAILURE);
+}
 
 void kq_waitpid(pid_t pid) {
   struct kevent event;
@@ -58,8 +67,7 @@ void kq_waitpid(pid_t pid) {
     exit(EXIT_FAILURE);
   } else if (ret > 0) {
     if (tevent.flags & EV_ERROR) {
-      fprintf(stderr, "Event error: %s\n", strerror(event.data));
-      exit(EXIT_FAILURE);
+      print_error_and_exit("Event error: %s\n", strerror(event.data));
     } else {
       printf("PID %d has exited...\n", pid);
     }
@@ -72,18 +80,14 @@ int main(int argc, char **argv) {
   long _pid;
   pid_t pid;
 
-  if (argc != 2) {
-    fprintf(stderr, "Usage: %s PID\n", argv[0]);
-    exit(EXIT_FAILURE);
-  }
+  if (argc != 2)
+    print_error_and_exit("Usage: %s PID\n", argv[0]);
 
   errno = 0;
   _pid = strtol(argv[1], NULL, 10);
 
-  if (errno == EINVAL || errno == ERANGE || _pid < 0 || _pid > INT_MAX) {
-    fprintf(stderr, "Error: invalid PID %s\n", argv[1]);
-    exit(EXIT_FAILURE);
-  }
+  if (errno == EINVAL || errno == ERANGE || _pid < 0 || _pid > INT_MAX)
+    print_error_and_exit("Error: invalid PID %s\n", argv[1]);
 
   pid = (pid_t)_pid;
 

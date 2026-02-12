@@ -1,10 +1,10 @@
 waitpid
 
-    A `wait` that waits for a non-child process to exit, taking advantage
-    of kqueue on FreeBSD and macOS.
+    A `wait` that waits for one or more non-child processes to exit, taking
+    advantage of kqueue on FreeBSD and macOS.
 
     This only has been tested on macOS. Sorry, this does not work on Linux.
 
 Usage:
 
-    waitpid <PID number>
+    waitpid <PID numbers>

@@ -37,12 +37,25 @@ void print_error_and_exit(const char *format, ...) {
   exit(EXIT_FAILURE);
 }
 
-void kq_waitpid(pid_t pid) {
-  struct kevent event;
-  struct kevent tevent;
-  int kq, ret;
+void kq_waitpids(int n_pids, pid_t *pids) {
+  struct kevent *pid_list;
+  struct kevent *event_list;
+  int i, kq, n, n_events;
 
-  printf("Waiting for PID %d to exit...\n", pid);
+  pid_list = malloc(n_pids * sizeof(struct kevent));
+  if (!pid_list)
+    print_error_and_exit("malloc() failed\n");
+
+  event_list = malloc(n_pids * sizeof(struct kevent));
+  if (!event_list)
+    print_error_and_exit("malloc() failed\n");
+
+  printf("Waiting for PID%s ", n_pids == 1 ? "" : "s");
+
+  for (i = 0; i < n_pids; ++i)
+    printf("%d ", pids[i]);
+
+  puts("to exit...");
 
   kq = kqueue();
 
@@ -51,47 +64,71 @@ void kq_waitpid(pid_t pid) {
     exit(EXIT_FAILURE);
   }
 
-  EV_SET(&event, pid, EVFILT_PROC, EV_ADD | EV_ENABLE, NOTE_EXIT, 0, NULL);
+  for (i = 0; i < n_pids; ++i)
+    EV_SET(&pid_list[i], pids[i], EVFILT_PROC, EV_ADD | EV_ENABLE, NOTE_EXIT, 0,
+           NULL);
 
   errno = 0;
-  if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
+  if (kevent(kq, pid_list, n_pids, NULL, 0, NULL) == -1) {
     perror("kevent");
     exit(EXIT_FAILURE);
   }
 
-  errno = 0;
-  ret = kevent(kq, NULL, 0, &tevent, 1, NULL);
+  for (i = 0; i < n_pids;) {
+    errno = 0;
+    n_events = kevent(kq, NULL, 0, event_list, n_pids, NULL);
 
-  if (ret == -1) {
-    perror("kevent");
-    exit(EXIT_FAILURE);
-  } else if (ret > 0) {
-    if (tevent.flags & EV_ERROR) {
-      print_error_and_exit("Event error: %s\n", strerror(event.data));
-    } else {
-      printf("PID %d has exited...\n", pid);
+    if (n_events == -1) {
+      perror("kevent");
+      exit(EXIT_FAILURE);
+    } else if (n_events > 0) {
+      i += n_events;
+
+      for (n = 0; n < n_events; ++n) {
+        if (event_list[n].flags & EV_ERROR) {
+          print_error_and_exit("Event error: %s\n",
+                               strerror(event_list[n].data));
+        } else {
+          printf("PID %lu has exited...\n", event_list[n].ident);
+        }
+      }
     }
   }
 
+  free(pid_list);
+  free(event_list);
   close(kq);
 }
 
-int main(int argc, char **argv) {
-  long _pid;
-  pid_t pid;
-
-  if (argc != 2)
-    print_error_and_exit("Usage: %s PID\n", argv[0]);
+pid_t parse_arg(const char *s) {
+  long pid;
 
   errno = 0;
-  _pid = strtol(argv[1], NULL, 10);
+  pid = strtol(s, NULL, 10);
 
-  if (errno == EINVAL || errno == ERANGE || _pid < 0 || _pid > INT_MAX)
-    print_error_and_exit("Error: invalid PID %s\n", argv[1]);
+  if (errno == EINVAL || errno == ERANGE || pid < 0 || pid > INT_MAX)
+    print_error_and_exit("Error: invalid PID: %s\n", s);
 
-  pid = (pid_t)_pid;
+  return (pid_t)pid;
+}
 
-  kq_waitpid(pid);
+int main(int argc, char **argv) {
+  pid_t *pids;
+  int i;
 
+  if (argc < 2)
+    print_error_and_exit("Usage: %s PID1 [PID2, PID3, ...]\n", argv[0]);
+
+  pids = malloc((sizeof(pid_t)) * (argc - 1));
+  if (!pids)
+    print_error_and_exit("malloc() failed\n");
+
+  for (i = 1; i < argc; ++i) {
+    pids[i - 1] = parse_arg(argv[i]);
+  }
+
+  kq_waitpids(argc - 1, pids);
+
+  free(pids);
   return EXIT_SUCCESS;
 }

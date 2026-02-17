@@ -29,12 +29,59 @@
 #include <sys/event.h>
 #include <unistd.h>
 
+static const char *prog_name;
+static int quiet = 0;
+
 void print_error_and_exit(const char *format, ...) {
   va_list args;
   va_start(args, format);
   vfprintf(stderr, format, args);
   va_end(args);
   exit(EXIT_FAILURE);
+}
+
+void print_usage_and_exit(const char *msg) {
+  if (msg)
+    fprintf(stderr, "%s\n", msg);
+
+  print_error_and_exit("Usage: %s [-q] PID1 [PID2, PID3, ...]\n", prog_name);
+}
+
+void parse_args(int argc, char **argv) {
+  int opt;
+
+  while((opt = getopt(argc, argv, "q")) != -1) {
+    switch(opt) {
+      case 'q':
+        quiet = 1;
+        break;
+      default:
+        print_usage_and_exit(NULL);
+    }
+  }
+}
+
+pid_t parse_pid(const char *s) {
+  long pid;
+
+  errno = 0;
+  pid = strtol(s, NULL, 10);
+
+  if (errno == EINVAL || errno == ERANGE || pid < 0 || pid > INT_MAX)
+    print_error_and_exit("Error: invalid PID: %s\n", s);
+
+  return (pid_t)pid;
+}
+
+void print_pids(int n_pids, pid_t *pids) {
+  int i;
+
+  printf("Waiting for PID%s ", n_pids == 1 ? "" : "s");
+
+  for (i = 0; i < n_pids; ++i)
+    printf("%d ", pids[i]);
+
+  puts("to exit...");
 }
 
 void kq_waitpids(int n_pids, pid_t *pids) {
@@ -50,12 +97,8 @@ void kq_waitpids(int n_pids, pid_t *pids) {
   if (!event_list)
     print_error_and_exit("malloc() failed\n");
 
-  printf("Waiting for PID%s ", n_pids == 1 ? "" : "s");
-
-  for (i = 0; i < n_pids; ++i)
-    printf("%d ", pids[i]);
-
-  puts("to exit...");
+  if (!quiet)
+    print_pids(n_pids, pids);
 
   kq = kqueue();
 
@@ -89,7 +132,8 @@ void kq_waitpids(int n_pids, pid_t *pids) {
           print_error_and_exit("Event error: %s\n",
                                strerror(event_list[n].data));
         } else {
-          printf("PID %lu has exited...\n", event_list[n].ident);
+          if (!quiet)
+            printf("PID %lu has exited...\n", event_list[n].ident);
         }
       }
     }
@@ -100,34 +144,27 @@ void kq_waitpids(int n_pids, pid_t *pids) {
   close(kq);
 }
 
-pid_t parse_arg(const char *s) {
-  long pid;
-
-  errno = 0;
-  pid = strtol(s, NULL, 10);
-
-  if (errno == EINVAL || errno == ERANGE || pid < 0 || pid > INT_MAX)
-    print_error_and_exit("Error: invalid PID: %s\n", s);
-
-  return (pid_t)pid;
-}
-
 int main(int argc, char **argv) {
   pid_t *pids;
-  int i;
+  int i, n_pids;
 
-  if (argc < 2)
-    print_error_and_exit("Usage: %s PID1 [PID2, PID3, ...]\n", argv[0]);
+  prog_name = argv[0];
 
-  pids = malloc((sizeof(pid_t)) * (argc - 1));
+  parse_args(argc, argv);
+
+  n_pids = argc - optind;
+
+  if (n_pids < 1)
+    print_usage_and_exit("Error: no PIDs provided\n");
+
+  pids = malloc((sizeof(pid_t)) * n_pids);
   if (!pids)
     print_error_and_exit("malloc() failed\n");
 
-  for (i = 1; i < argc; ++i) {
-    pids[i - 1] = parse_arg(argv[i]);
-  }
+  for (i = 0; optind < argc; ++optind, ++i)
+    pids[i] = parse_pid(argv[optind]);
 
-  kq_waitpids(argc - 1, pids);
+  kq_waitpids(n_pids, pids);
 
   free(pids);
   return EXIT_SUCCESS;
